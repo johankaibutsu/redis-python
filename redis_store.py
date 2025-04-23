@@ -249,8 +249,118 @@ class PyRedisStore:
             print(f"Error: Invalid seconds value '{seconds}'.")
             return 0 # Failed to set expiry
 
+    # --- Hash Commands ---
+    def command_hset(self, key, field, value):
+        """Sets the value of a field in a hash stored at key."""
+        print(f"Executing: HSET {key} {field} {value}")
+
+        if self._check_expiry(key):
+            # Key expired, create a new hash
+            self._data[key] = {field: value}
+            if key in self._expirations: del self._expirations[key]
+            print(f"Created new hash for key '{key}' after expiry.")
+            return 1 # 1 field added
+
+        current_value = self._data.get(key)
+        if current_value is None:
+            self._data[key] = {field: value}
+            if key in self._expirations: del self._expirations[key]
+            print(f"Created new hash for key '{key}'.")
+            return 1
+        elif isinstance(current_value, dict):
+            is_new_field = field not in current_value
+            current_value[field] = value
+            print(f"Set field '{field}' in hash '{key}'. New field: {is_new_field}")
+            return 1 if is_new_field else 0
+        else:
+            error_msg = "WRONGTYPE Operation against a key holding the wrong kind of value"
+            print(f"Error for key '{key}': {error_msg}")
+            return f"ERROR: {error_msg}"
+
+    def command_hget(self, key, field):
+        """Gets the value of a field in a hash stored at key."""
+        print(f"Executing: HGET {key} {field}")
+
+        value, error = self._get_value_or_error(key, expected_type=dict)
+        if error:
+            return f"ERROR: {error}"
+        if value is None:
+            print(f"Hash '{key}' not found or expired.")
+            return None
+
+        field_value = value.get(field, None)
+        print(f"Retrieved field '{field}' from hash '{key}': {field_value}")
+        return field_value
+
+    def command_hdel(self, key, *fields):
+        """Deletes one or more fields from a hash stored at key."""
+        print(f"Executing: HDEL {key} {' '.join(fields)}")
+        if not fields:
+             print("Error: HDEL requires at least one field.")
+             return "ERROR: wrong number of arguments for 'hdel' command"
+
+        value, error = self._get_value_or_error(key, expected_type=dict)
+        if error:
+            return f"ERROR: {error}"
+        if value is None:
+            print(f"Hash '{key}' not found or expired. Cannot delete fields.")
+            return 0
+
+        deleted_count = 0
+        for field in fields:
+            if field in value:
+                del value[field]
+                deleted_count += 1
+                print(f"Deleted field '{field}' from hash '{key}'.")
+            else:
+                 print(f"Field '{field}' not found in hash '{key}'.")
+
+        if not value:
+            self._delete_key_internal(key)
+            print(f"Hash '{key}' became empty and was deleted.")
+
+        print(f"Deleted {deleted_count} fields from hash '{key}'.")
+        return deleted_count
+
 if __name__ == "__main__":
     store = PyRedisStore()
+
+    print("\n--- Testing Basic Commands ---")
+    print(f"SET name Johan: {store.command_set('name', 'Johan')}")
+    print(f"GET name: {store.command_get('name')}")
+    print(f"SET age 23: {store.command_set('age', '23')}")
+    print(f"GET age: {store.command_get('age')}")
+    print(f"GET non_existent: {store.command_get('non_existent')}")
+    print(f"DEL age: {store.command_del('age')}")
+    print(f"GET age: {store.command_get('age')}")
+    print(f"DEL name non_existent: {store.command_del('name', 'non_existent')}")
+    print(f"GET name: {store.command_get('name')}")
+
+    print("\n--- Testing Expiration ---")
+    # Set with expiration (e.g., 2000ms = 2 seconds)
+    print(f"SET temp_key temp_value EX 2000: {store.command_set('temp_key', 'temp_value', expire_ms='2000')}")
+    print(f"GET temp_key (should exist): {store.command_get('temp_key')}")
+    print(f"TTL temp_key (should be > 0): {store.command_ttl('temp_key')}")
+    print("Waiting for 3 seconds...")
+    time.sleep(3)
+    print(f"GET temp_key (should be None): {store.command_get('temp_key')}")
+    print(f"TTL temp_key (should be -2): {store.command_ttl('temp_key')}") # Should be -2 (non-existent or expired)
+
+    print("\n--- Testing EXPIRE command ---")
+    print(f"SET persistent_key data: {store.command_set('persistent_key', 'data')}")
+    print(f"TTL persistent_key (should be -1): {store.command_ttl('persistent_key')}")
+    print(f"EXPIRE persistent_key 2: {store.command_expire('persistent_key', '2')}")
+    print(f"TTL persistent_key (should be > 0): {store.command_ttl('persistent_key')}")
+    print("Waiting for 3 seconds...")
+    time.sleep(3)
+    print(f"GET persistent_key (should be None): {store.command_get('persistent_key')}")
+    print(f"TTL persistent_key (should be -2): {store.command_ttl('persistent_key')}")
+
+    print("\n--- Testing DEL on expired key ---")
+    print(f"SET short_lived short_data EX 1000: {store.command_set('short_lived', 'short_data', expire_ms='1000')}")
+    print("Waiting 2 seconds...")
+    time.sleep(2)
+    print(f"DEL short_lived: {store.command_del('short_lived')}") # Should return 0 as it expired
 
     print("\n--- Testing List Commands ---")
     print(f"LPUSH mylist a: {store.command_lpush('mylist', 'a')}") # mylist: ['a']
@@ -275,3 +385,27 @@ if __name__ == "__main__":
     print("Waiting 3 seconds...")
     time.sleep(3)
     print(f"LRANGE temp_list 0 -1 (should be empty): {store.command_lrange('temp_list', '0', '-1')}")
+
+    print("\n--- Testing Hash Commands ---")
+    print(f"HSET user:1 name Johan: {store.command_hset('user:1', 'name', 'Johan')}") # New hash, new field = 1
+    print(f"HSET user:1 age 23: {store.command_hset('user:1', 'age', '23')}")     # Existing hash, new field = 1
+    print(f"HSET user:1 name Jojo: {store.command_hset('user:1', 'name', 'Jojo')}")# Existing hash, existing field = 0
+    print(f"HGET user:1 name: {store.command_hget('user:1', 'name')}")           # Should be Jojo
+    print(f"HGET user:1 age: {store.command_hget('user:1', 'age')}")             # Should be 23
+    print(f"HGET user:1 city: {store.command_hget('user:1', 'city')}")           # Field doesn't exist = None
+    print(f"HGET non_existent_user name: {store.command_hget('non_existent_user', 'name')}") # Key doesn't exist = None
+    print(f"HDEL user:1 age city: {store.command_hdel('user:1', 'age', 'city')}") # Delete existing 'age' and non-existing 'city' = 1
+    print(f"HGET user:1 age: {store.command_hget('user:1', 'age')}")             # Should be None
+    print(f"HGET user:1 name: {store.command_hget('user:1', 'name')}")           # Should still be Jojo
+    print(f"HDEL user:1 name: {store.command_hdel('user:1', 'name')}")           # Delete last field = 1
+    print(f"HGET user:1 name: {store.command_hget('user:1', 'name')}")           # Should be None (field gone)
+    # Key user:1 still exists but is an empty hash now. Let's check TTL (should be -1 unless EXPIREd)
+    print(f"TTL user:1: {store.command_ttl('user:1')}")
+    print(f"DEL user:1: {store.command_del('user:1')}") # Clean up the empty hash key
+
+    print("\n--- Testing Type Errors with Hashes ---")
+    print(f"SET mystring again: {store.command_set('mystring', 'again')}")
+    print(f"HSET mystring field value: {store.command_hset('mystring', 'field', 'value')}") # Should fail (WRONGTYPE)
+    print(f"LPUSH mylist again: {store.command_lpush('mylist', 'again')}")
+    print(f"HGET mylist field: {store.command_hget('mylist', 'field')}") # Should fail (WRONGTYPE)
+    print(f"DEL mystring mylist: {store.command_del('mystring', 'mylist')}")
