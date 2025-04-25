@@ -36,20 +36,17 @@ def load_data_from_disk():
                          store._data = loaded_data[0]
                          store._expirations = loaded_data[1]
                          print(f"[Server] Successfully loaded {len(store._data)} keys from disk.")
-                         keys_to_delete = []
                          for key in list(store._data.keys()):
-                             if store._check_expiry(key):
-                                 pass
+                             store._check_expiry(key)
                          print("[Server] Performed initial expiry check on loaded data.")
                      else:
-                         print("[Server] Error: Dump file format is incorrect. Starting with empty store.")
+                         print("[Server] Error: Dump file format incorrect. Starting empty.")
                          store = PyRedisStore()
         except (pickle.UnpicklingError, EOFError, TypeError, Exception) as e:
-            print(f"[Server] Error loading data from '{DUMP_FILENAME}': {e}. Starting with empty store.")
+            print(f"[Server] Error loading data from '{DUMP_FILENAME}': {e}. Starting empty.")
             store = PyRedisStore()
     else:
-        print(f"[Server] Dump file '{DUMP_FILENAME}' not found. Starting with empty store.")
-
+        print(f"[Server] Dump file '{DUMP_FILENAME}' not found. Starting empty.")
 
 def save_data_to_disk():
     """Saves the current data and expirations to the pickle dump file."""
@@ -59,10 +56,10 @@ def save_data_to_disk():
             data_to_save = (store._data, store._expirations)
             with open(DUMP_FILENAME, 'wb') as f:
                 pickle.dump(data_to_save, f)
-            print(f"[Server] Data successfully saved to '{DUMP_FILENAME}'.")
-            return "OK"
+            print(f"[Server] Data successfully saved.")
+            return "OK. Data saved successfully."
         except Exception as e:
-            print(f"[Server] Error saving data to '{DUMP_FILENAME}': {e}")
+            print(f"[Server] Error saving data: {e}")
             return f"ERROR: Could not save data: {e}"
 
 def handle_connection(conn, addr):
@@ -90,61 +87,62 @@ def handle_connection(conn, addr):
                 command = parts[0].upper()
                 args = parts[1:]
                 response = None
-
                 if command == "SAVE":
                     if not args:
                         response = save_data_to_disk()
                     else:
                         response = "ERROR: 'save' command takes no arguments"
+                elif command == "QUIT":
+                    pass
+                elif command == "PING":
+                    if not args:
+                        response = "PONG"
+                    else:
+                        response = "ERROR: 'ping' command takes no arguments"
+                elif command == "COMMAND":
+                     response = "Commands: SET, GET, DEL, LPUSH, RPUSH, LRANGE, HSET, HGET, HDEL, TTL, EXPIRE, PING, SAVE, COMMAND, QUIT"
                 else:
-                    with store_lock:
-                        try:
+                    try:
+                        with store_lock:
                             if command == "SET":
-                                if len(args) == 2:
-                                    response = store.command_set(args[0], args[1])
-                                elif len(args) == 4 and args[2].upper() == "EX":
-                                    response = store.command_set(args[0], args[1], expire_ms=args[3])
-                                else:
-                                    response = "ERROR: wrong number of arguments for 'set' command"
+                                if len(args) == 2: response = store.command_set(args[0], args[1])
+                                elif len(args) == 4 and args[2].upper() == "EX": response = store.command_set(args[0], args[1], expire_ms=args[3])
+                                else: response = "ERROR: wrong number of arguments for 'set' command"
                             elif command == "GET":
-                                if len(args) == 1:
-                                    response = store.command_get(args[0])
-                                elif command == "DEL":
-                                     if len(args) >= 1: response = store.command_del(*args)
-                                     else: response = "ERROR: wrong number of arguments for 'del' command"
-                                elif command == "LPUSH":
-                                    if len(args) >= 2: response = store.command_lpush(args[0], *args[1:])
-                                    else: response = "ERROR: wrong number of arguments for 'lpush' command"
-                                elif command == "RPUSH":
-                                    if len(args) >= 2: response = store.command_rpush(args[0], *args[1:])
-                                    else: response = "ERROR: wrong number of arguments for 'rpush' command"
-                                elif command == "LRANGE":
-                                    if len(args) == 3: response = store.command_lrange(args[0], args[1], args[2])
-                                    else: response = "ERROR: wrong number of arguments for 'lrange' command"
-                                elif command == "HSET":
-                                    if len(args) == 3: response = store.command_hset(args[0], args[1], args[2])
-                                    else: response = "ERROR: wrong number of arguments for 'hset' command"
-                                elif command == "HGET":
-                                    if len(args) == 2: response = store.command_hget(args[0], args[1])
-                                    else: response = "ERROR: wrong number of arguments for 'hget' command"
-                                elif command == "HDEL":
-                                    if len(args) >= 2: response = store.command_hdel(args[0], *args[1:])
-                                    else: response = "ERROR: wrong number of arguments for 'hdel' command"
-                                elif command == "TTL":
-                                     if len(args) == 1: response = store.command_ttl(args[0])
-                                     else: response = "ERROR: wrong number of arguments for 'ttl' command"
-                                elif command == "EXPIRE":
-                                     if len(args) == 2: response = store.command_expire(args[0], args[1])
-                                     else: response = "ERROR: wrong number of arguments for 'expire' command"
-                                elif command == "PING": response = "PONG"
-                                elif command == "COMMAND": response = "Commands: ..."
-                                elif command == "QUIT": response = "OK"
-                                else: response = f"ERROR: Unknown command '{command}'"
-
-                        except Exception as e:
-                            print(f"[Server] Error executing command '{command_line}': {e}")
-                            response = f"ERROR: Internal server error: {e}"
-
+                                if len(args) == 1: response = store.command_get(args[0])
+                                else: response = "ERROR: wrong number of arguments for 'get' command"
+                            elif command == "DEL":
+                                if len(args) >= 1: response = store.command_del(*args)
+                                else: response = "ERROR: wrong number of arguments for 'del' command"
+                            elif command == "LPUSH":
+                                if len(args) >= 2: response = store.command_lpush(args[0], *args[1:])
+                                else: response = "ERROR: wrong number of arguments for 'lpush' command"
+                            elif command == "RPUSH":
+                                if len(args) >= 2: response = store.command_rpush(args[0], *args[1:])
+                                else: response = "ERROR: wrong number of arguments for 'rpush' command"
+                            elif command == "LRANGE":
+                                if len(args) == 3: response = store.command_lrange(args[0], args[1], args[2])
+                                else: response = "ERROR: wrong number of arguments for 'lrange' command"
+                            elif command == "HSET":
+                                if len(args) == 3: response = store.command_hset(args[0], args[1], args[2])
+                                else: response = "ERROR: wrong number of arguments for 'hset' command"
+                            elif command == "HGET":
+                                if len(args) == 2: response = store.command_hget(args[0], args[1])
+                                else: response = "ERROR: wrong number of arguments for 'hget' command"
+                            elif command == "HDEL":
+                                if len(args) >= 2: response = store.command_hdel(args[0], *args[1:])
+                                else: response = "ERROR: wrong number of arguments for 'hdel' command"
+                            elif command == "TTL":
+                                if len(args) == 1: response = store.command_ttl(args[0])
+                                else: response = "ERROR: wrong number of arguments for 'ttl' command"
+                            elif command == "EXPIRE":
+                                if len(args) == 2: response = store.command_expire(args[0], args[1])
+                                else: response = "ERROR: wrong number of arguments for 'expire' command"
+                            else:
+                                response = f"ERROR: Unknown command '{command}'"
+                    except Exception as e:
+                        print(f"[Server] Error executing command '{command_line}' under lock: {e}")
+                        response = f"ERROR: Internal server error"
                 if command == "QUIT":
                      response_str = "OK"
                      print(f"[Server] Sending to {addr}: {response_str}")
@@ -152,11 +150,21 @@ def handle_connection(conn, addr):
                      print(f"[Server] QUIT received, closing connection to {addr}")
                      conn.close()
                      return
-
-                if response is None: response_str = "Nil"
-                elif isinstance(response, list): response_str = "\n".join(map(str, response))
-                elif isinstance(response, int): response_str = f":{response}"
-                else: response_str = str(response)
+                response_str = ""
+                if response is None:
+                    response_str = "Nil"
+                elif isinstance(response, list):
+                    #response_str = "\n".join(map(str, response))
+                    response_str = str(response)
+                    if not response_str:
+                         response_str = "(empty list or set)"
+                elif isinstance(response, int):
+                    response_str = f"(integer) {response}"
+                elif isinstance(response, str):
+                    response_str = response
+                else:
+                    print(f"[Server] Warning: Unexpected response type: {type(response)}. Converting to string.")
+                    response_str = str(response)
 
                 print(f"[Server] Sending to {addr}: {response_str[:100]}...")
                 conn.sendall(f"{response_str}\n".encode('utf-8'))
@@ -172,21 +180,17 @@ def handle_connection(conn, addr):
 def run_server(host=DEFAULT_HOST, port=DEFAULT_PORT):
     """Loads data, then starts the PyRedis server."""
     load_data_from_disk()
-
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
     try:
         server_socket.bind((host, port))
         server_socket.listen(5)
         print(f"[Server] PyRedis server listening on {host}:{port}")
-
         while True:
             conn, addr = server_socket.accept()
             thread = threading.Thread(target=handle_connection, args=(conn, addr))
             thread.daemon = True
             thread.start()
-
     except OSError as e:
         print(f"[Server] Error binding to {host}:{port} - {e}")
     except KeyboardInterrupt:

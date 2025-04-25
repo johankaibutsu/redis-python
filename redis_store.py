@@ -244,22 +244,20 @@ class PyRedisStore:
                 expiry_timestamp = time.time() + expire_seconds
                 self._expirations[key] = expiry_timestamp
                 print(f"Set expiration for key '{key}' to {expire_seconds} seconds from now (timestamp: {expiry_timestamp}).")
-                return 1 # Expiry set successfully
+                return 1
         except ValueError:
             print(f"Error: Invalid seconds value '{seconds}'.")
-            return 0 # Failed to set expiry
+            return 0
 
-    # --- Hash Commands ---
     def command_hset(self, key, field, value):
         """Sets the value of a field in a hash stored at key."""
         print(f"Executing: HSET {key} {field} {value}")
 
         if self._check_expiry(key):
-            # Key expired, create a new hash
             self._data[key] = {field: value}
             if key in self._expirations: del self._expirations[key]
             print(f"Created new hash for key '{key}' after expiry.")
-            return 1 # 1 field added
+            return 1
 
         current_value = self._data.get(key)
         if current_value is None:
